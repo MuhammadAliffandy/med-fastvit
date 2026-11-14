@@ -1,6 +1,10 @@
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -35,6 +39,41 @@ class ArchiveTests(unittest.TestCase):
         (self.evaluation/'metrics.json').write_text(json.dumps(self.metrics))
         with self.assertRaisesRegex(ValueError,'epoch differs'):
             archive.validate_run(self.training,self.evaluation)
+    def test_backup_script_uses_rsync_when_rclone_is_unavailable(self):
+        system_path='/usr/bin:/bin'
+        if not shutil.which('rsync',path=system_path) or shutil.which('rclone',path=system_path):
+            self.skipTest('Requires system rsync without system rclone')
+        project=self.root/'project'; scripts=project/'scripts';scripts.mkdir(parents=True)
+        original=Path(__file__).resolve().parents[1]/'scripts'
+        for filename in ('backup_exp01.sh','archive_experiment.py'):
+            shutil.copy2(original/filename,scripts/filename)
+        snapshot=project/'runs/archives/exp01_fastvit_320';snapshot.mkdir(parents=True)
+        (snapshot/'checkpoint').write_bytes(b'fixture checkpoint')
+        (snapshot/'SHA256SUMS').write_text(f"{archive.sha256(snapshot/'checkpoint')}  checkpoint\n")
+        binaries=self.root/'bin';binaries.mkdir();os.symlink(sys.executable,binaries/'python')
+        destination=self.root/'mounted-drive/exp01'
+        env={**os.environ,'PATH':str(binaries)+':'+system_path}
+        result=subprocess.run(['/bin/bash',str(scripts/'backup_exp01.sh'),str(destination)],
+                              env=env,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('Using rsync',result.stdout)
+        self.assertIn('copy verified',result.stdout)
+        self.assertEqual((destination/'checkpoint').read_bytes(),b'fixture checkpoint')
+
+    def test_destination_manifest_must_match_source(self):
+        source=self.root/'source';source.mkdir()
+        destination=self.root/'destination';destination.mkdir()
+        (source/'result').write_bytes(b'correct result')
+        reference=source/'SHA256SUMS'
+        reference.write_text(f"{archive.sha256(source/'result')}  result\n")
+        (destination/'result').write_bytes(b'correct result')
+        (destination/'SHA256SUMS').write_text(reference.read_text())
+        archive.verify_archive(destination,reference)
+        (destination/'result').write_bytes(b'changed result')
+        (destination/'SHA256SUMS').write_text(f"{archive.sha256(destination/'result')}  result\n")
+        with self.assertRaisesRegex(ValueError,'differs from the source'):
+            archive.verify_archive(destination,reference)
+
     def test_complete_archive_and_corruption_detection(self):
         out=self.root/'out'
         def git_archive(command,**kwargs):

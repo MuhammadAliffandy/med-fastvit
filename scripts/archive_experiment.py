@@ -34,13 +34,16 @@ def validate_run(training, evaluation):
     return metrics,history,best
 
 
-def verify_archive(out):
-    lines=(out/'SHA256SUMS').read_text().splitlines()
+def verify_archive(out, checksums=None):
+    reference=checksums or out/'SHA256SUMS'
+    if checksums is not None and sha256(out/'SHA256SUMS') != sha256(reference):
+        raise ValueError('Destination SHA256SUMS differs from the source archive')
+    lines=reference.read_text().splitlines()
     if not lines: raise ValueError('Archive checksum list is empty')
     for line in lines:
         expected,relative=line.split('  ',1)
         if sha256(out/relative) != expected: raise ValueError(f'Archive checksum mismatch: {relative}')
-    print(f'Local archive verified: {out}',flush=True)
+    print(f'Archive contents verified: {out}',flush=True)
 
 
 def prepare_archive(project, training, evaluation, out):
@@ -94,6 +97,11 @@ if __name__=='__main__':
     parser.add_argument('--training',default='runs/fastvit_medpack_fixed')
     parser.add_argument('--evaluation',default='runs/eval_valid_best')
     parser.add_argument('--out',default='runs/archives/exp01_fastvit_320')
+    parser.add_argument('--verify-dir',type=Path,default=None)
+    parser.add_argument('--checksums',type=Path,default=None)
     args=parser.parse_args()
+    if args.verify_dir:
+        verify_archive(args.verify_dir.expanduser().resolve(),args.checksums)
+        sys.exit(0)
     project=Path(__file__).resolve().parents[1]
     prepare_archive(project,Path(args.training).resolve(),Path(args.evaluation).resolve(),Path(args.out).resolve())
