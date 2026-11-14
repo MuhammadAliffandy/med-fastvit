@@ -100,3 +100,21 @@ CUDA_VISIBLE_DEVICES=0 python -u src/evaluate_fastvit_medpack.py \
 ```
 
 The default precision/recall thresholds can be specified with `--score-threshold` and `--iou-threshold`. Keep these settings fixed for test reporting.
+
+## Archive Experiment 01 to xxdrive
+
+After training and validation evaluation finish:
+
+```bash
+conda activate fastvit_medpack
+bash scripts/backup_exp01.sh
+```
+
+Default destination: `~/xxdrive/MedPackID/experiments/exp01_fastvit_320`. An explicit path or rclone remote can be passed as the first argument. The script prepares `runs/archives/exp01_fastvit_320` with:
+
+- The training run (`best.pth`, `last.pth`, loss history, log, dataset audit and target previews).
+- Validation metrics, predictions, ground truth and prediction previews.
+- A tracked-code snapshot at the archive commit and environment exports captured at archive time.
+- `experiment.json` naming the experiment, best epoch and validation results, plus `SHA256SUMS` for every archived file.
+
+It verifies that the checkpoint matches the SHA-256 recorded by evaluation before preparing the archive. Subsequent runs verify and reuse the same local snapshot. rclone copies with progress and `--immutable`, then checks source and destination contents. When `xxdrive` is a cached mount, this verifies the mounted destination; cloud upload completion is managed separately by the mount.
