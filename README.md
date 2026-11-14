@@ -65,3 +65,38 @@ python src/train_fastvit_medpack.py --data data/MedPackID --audit-only --out run
 It writes `dataset_audit.json` with image counts, positive/empty image counts, and box counts per class, plus `train_target_0.jpg` through `train_target_3.jpg` for visual inspection. Missing or ambiguous image/annotation pairs, invalid coordinates, unknown classes, and a split with zero boxes stop the run. The default prioritizes the YOLO export; `--annotation-format voc` selects the VOC export.
 
 Loss values use scientific notation. A small validation loss is not a detection accuracy metric; use an independent object detection evaluation for final reporting. Start a new output directory after correcting an annotation issue so earlier checkpoints are preserved.
+
+## Evaluate the trained checkpoint
+
+Activate the existing environment and install the COCO metric dependency (no environment rebuild):
+
+```bash
+conda activate fastvit_medpack
+python -m pip install 'pycocotools>=2.0.7,<3'
+CUDA_VISIBLE_DEVICES=0 python -u src/evaluate_fastvit_medpack.py \
+  --data data/MedPackID \
+  --checkpoint runs/fastvit_medpack_fixed/best.pth \
+  --split valid --out runs/eval_valid_best
+```
+
+The evaluator reconstructs the architecture and image size from the checkpoint and loads all model weights strictly. It does not download pretrained weights or modify the checkpoint. Full-precision inference uses the same aspect-preserving resize and normalization as training.
+
+Outputs:
+
+- `metrics.json`: checkpoint epoch and SHA-256, split, annotation audit, overall COCO mAP50-95, mAP50, mAP75 and AR100, per-class AP, and precision/recall/F1.
+- `per_class.csv`: metrics for `kemasan` and `pil`.
+- `previews/*.jpg`: ground truth on the left in green, predictions on the right in red.
+- `predictions.json` and `ground_truth.json`: COCO-format records for reproducing the evaluation. `image_index.json` and `preview_index.json` map results to source images.
+
+AP is computed using the official [COCO evaluator](https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py) across IoU thresholds 0.50:0.05:0.95, with at most 100 detections per image and an inference score floor of 0.001. Precision/recall/F1 use confidence >= 0.50 and same-class, one-to-one IoU >= 0.50 matching. The confidence threshold applies to precision/recall and previews; AP uses the full set of predictions above the inference floor. Values are on a 0-1 scale, and undefined metrics for classes absent from a split are JSON null.
+
+Use validation to inspect predictions and choose any thresholds. Once the checkpoint, thresholds, and settings are fixed, run the final test evaluation:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -u src/evaluate_fastvit_medpack.py \
+  --data data/MedPackID \
+  --checkpoint runs/fastvit_medpack_fixed/best.pth \
+  --split test --out runs/eval_test_best
+```
+
+The default precision/recall thresholds can be specified with `--score-threshold` and `--iou-threshold`. Keep these settings fixed for test reporting.

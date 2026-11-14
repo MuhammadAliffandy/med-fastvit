@@ -57,13 +57,21 @@ class MedPackDataset(Dataset):
 
 
 class FastViTFPN(torch.nn.Module):
-    def __init__(self, model_name, out_channels=192):
+    def __init__(self, model_name, out_channels=192, pretrained=True):
         super().__init__()
-        self.body = timm.create_model(model_name, pretrained=True, features_only=True, out_indices=(0,1,2,3))
+        self.body = timm.create_model(model_name, pretrained=pretrained, features_only=True, out_indices=(0,1,2,3))
         self.fpn = FeaturePyramidNetwork(self.body.feature_info.channels(), out_channels)
         self.out_channels = out_channels
     def forward(self, x):
         return self.fpn({str(i): feat for i, feat in enumerate(self.body(x))})
+
+
+def build_detector(backbone_name, num_classes, image_size, pretrained=True, score_threshold=0.05):
+    backbone = FastViTFPN(backbone_name, pretrained=pretrained)
+    anchors = AnchorGenerator(((16,32),(32,64),(64,128),(128,256)), ((0.5,1.0,2.0),)*4)
+    return FasterRCNN(backbone, num_classes=num_classes, rpn_anchor_generator=anchors,
+                      min_size=image_size, max_size=image_size, box_detections_per_img=100,
+                      box_score_thresh=score_threshold)
 
 
 def collate_fn(batch): return tuple(zip(*batch))
@@ -158,10 +166,7 @@ def main():
                               pin_memory=True, persistent_workers=args.workers > 0, collate_fn=collate_fn)
     valid_loader = DataLoader(valid_ds, batch_size=max(1,args.batch_size//2), shuffle=False, num_workers=args.workers,
                               pin_memory=True, persistent_workers=args.workers > 0, collate_fn=collate_fn)
-    backbone = FastViTFPN(args.backbone)
-    anchors = AnchorGenerator(((16,32),(32,64),(64,128),(128,256)), ((0.5,1.0,2.0),)*4)
-    model = FasterRCNN(backbone, num_classes=len(names)+1, rpn_anchor_generator=anchors,
-                       min_size=args.image_size, max_size=args.image_size, box_detections_per_img=100).to(device)
+    model = build_detector(args.backbone,len(names)+1,args.image_size).to(device)
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=max(1,args.epochs*2//3), gamma=.1)
     scaler = torch.amp.GradScaler("cuda")
