@@ -11,7 +11,7 @@ cd /home/D13K48009/raid/Clara/fastvit-medpack
 bash scripts/setup_conda.sh
 ```
 
-The environment uses Python 3.10, PyTorch/Torchvision with CUDA 12.1, and the packages in `requirements-dgx.txt`. Verify the DGX driver supports CUDA 12.1 runtime compatibility. The setup installs framework and Python dependencies; it does not download training data.
+The environment pins Python 3.10, PyTorch 2.5.1/Torchvision 0.20.1 with CUDA 12.1, and MKL below 2025 to avoid the `iJIT_NotifyEvent` ABI mismatch. Python packages are listed in `requirements-dgx.txt`. Verify the DGX driver supports CUDA 12.1 runtime compatibility. The setup installs framework and Python dependencies; it does not download training data.
 
 ## Download and train
 

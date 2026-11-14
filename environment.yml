@@ -5,9 +5,10 @@ channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - pytorch>=2.3
-  - torchvision>=0.18
+  - pytorch=2.5.1
+  - torchvision=0.20.1
   - pytorch-cuda=12.1
+  - "mkl<2025"
   - pip
   - pip:
       - -r requirements-dgx.txt
