@@ -53,3 +53,15 @@ tail -f runs/fastvit_medpack_100ep/train.log
 Training starts at the configured learning rate with no warmup. It saves `last.pth` every epoch, updates `best.pth` by validation loss, and writes `history.json`. It does not evaluate the test split during training.
 
 The dataset archive is large (about 3.03 GB). Ensure the RAID has enough space for the downloaded archive, extracted files, and checkpoints. The supplied checksum is checked before extraction.
+
+## Audit bounding boxes before training
+
+Run the annotation audit before starting or restarting an experiment:
+
+```bash
+python src/train_fastvit_medpack.py --data data/MedPackID --audit-only --out runs/annotation_audit
+```
+
+It writes `dataset_audit.json` with image counts, positive/empty image counts, and box counts per class, plus `train_target_0.jpg` through `train_target_3.jpg` for visual inspection. Missing or ambiguous image/annotation pairs, invalid coordinates, unknown classes, and a split with zero boxes stop the run. The default prioritizes the YOLO export; `--annotation-format voc` selects the VOC export.
+
+Loss values use scientific notation. A small validation loss is not a detection accuracy metric; use an independent object detection evaluation for final reporting. Start a new output directory after correcting an annotation issue so earlier checkpoints are preserved.
