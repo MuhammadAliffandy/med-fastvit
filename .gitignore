@@ -1,0 +1,13 @@
+# Dataset and model outputs
+data/
+runs/
+*.pth
+*.pt
+*.zip
+*.zip.extracted
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env

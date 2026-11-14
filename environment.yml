@@ -1,0 +1,13 @@
+name: fastvit_medpack
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch>=2.3
+  - torchvision>=0.18
+  - pytorch-cuda=12.1
+  - pip
+  - pip:
+      - -r requirements-dgx.txt
