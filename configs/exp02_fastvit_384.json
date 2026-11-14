@@ -1,0 +1,13 @@
+{
+  "experiment_name": "exp02_fastvit_384",
+  "backbone": "fastvit_sa12.apple_in1k",
+  "image_size": 384,
+  "epochs": 100,
+  "batch_size": 8,
+  "workers": 12,
+  "lr": 0.0002,
+  "weight_decay": 0.0001,
+  "seed": 42,
+  "annotation_format": "yolo",
+  "val_map_every": 5
+}

@@ -7,7 +7,7 @@ FastViT ImageNet-pretrained backbone + FPN + Faster R-CNN for the MedPackID obje
 Clone this repository on DGX under the RAID project directory, then create the Conda environment:
 
 ```bash
-cd /home/D13K48009/raid/Clara/fastvit-medpack
+cd /raid/D13K48009/Clara/med-fastvit
 bash scripts/setup_conda.sh
 ```
 
@@ -16,7 +16,7 @@ The environment pins Python 3.10, PyTorch 2.5.1/Torchvision 0.20.1 with CUDA 12.
 ## Download and train
 
 ```bash
-cd /home/D13K48009/raid/Clara/fastvit-medpack
+cd /raid/D13K48009/Clara/med-fastvit
 conda activate fastvit_medpack
 GPU_ID=0 bash run_dgx.sh
 ```
@@ -118,3 +118,31 @@ Default destination: `~/xxdrive/MedPackID/experiments/exp01_fastvit_320`. An exp
 - `experiment.json` naming the experiment, best epoch and validation results, plus `SHA256SUMS` for every archived file.
 
 It verifies that the checkpoint matches the SHA-256 recorded by evaluation before preparing the archive. Subsequent runs verify and reuse the same local snapshot. The script uses rclone with progress and `--immutable` when available. For a mounted local destination, it falls back to rsync with progress and `--ignore-existing`, then verifies the copied files against the source SHA-256 manifest. Existing destination files with different content cause verification to fail. When `xxdrive` is a cached mount, this verifies the mounted destination; cloud upload completion is managed separately by the mount.
+
+## Experiment 02: FastViT at 384 px
+
+Experiment 01 achieved validation mAP50-95 = 0.6880. Pil had 22 false positives at confidence 0.5 / IoU 0.5 and AP75 = 0.7118. Experiment 02 tests the hypothesis that increasing the input resolution from 320 to 384 px improves localization, particularly for pil. Improvement in false positives is an empirical question; the run does not promise a higher score.
+
+The recipe is `configs/exp02_fastvit_384.json`. Backbone SA12, FPN channels/upsampling, Faster R-CNN, anchor sizes, training split, seed 42, batch size 8, AdamW LR 0.0002, weight decay 0.0001, StepLR and 100 epochs remain as in Experiment 01. Training starts from the ImageNet backbone with a fresh detection head. There is no LR warmup. The resize keeps the image aspect ratio; min_size and max_size are both 384, so the long side is 384 before stride padding.
+
+The run uses the existing extracted dataset and the existing `fastvit_medpack` environment. Run from the DGX repository:
+
+```bash
+git pull origin main
+conda activate fastvit_medpack
+mkdir -p runs/exp02_fastvit_384
+GPU_ID=0 nohup bash run_exp02.sh \
+  > runs/exp02_fastvit_384/train.log 2>&1 < /dev/null &
+echo $! > runs/exp02_fastvit_384/run.pid
+tail -f runs/exp02_fastvit_384/train.log
+```
+
+Checkpoint and result selection:
+
+- `best.pth`: minimum validation loss, allowing comparison with Experiment 01's loss-selected checkpoint.
+- `best_map.pth`: maximum validation mAP50-95 among evaluations every 5 epochs (including epoch 100). This is an additional checkpoint-selection analysis, not a controlled resolution-only comparison against Experiment 01's loss-selected checkpoint.
+- `last.pth`, `history.json`, `dataset_audit.json`, `run_config.json`: final checkpoint, loss/mAP history, annotation audit, and recorded arguments/Git revision/environment versions.
+
+Metric inference uses float32 and a score floor of 0.001, matching offline evaluation. It preserves training RNG state. At the end, both best checkpoints are evaluated on validation with the original confidence 0.5 and matching IoU 0.5, and compared to `runs/eval_valid_best`. Reports are stored in `eval_valid_loss/` and `eval_valid_map/` under the new run. Each contains `comparison_exp01.json`, including mAP changes in percentage points and per-class FP/FN/precision/recall. The comparison rejects changed validation annotations or evaluation thresholds. Test data are not evaluated during this experiment.
+
+An output directory with existing checkpoints is rejected to protect previous results. This script does not implement training resumption. For a deliberate repeat, supply a fresh `RUN_DIR`.

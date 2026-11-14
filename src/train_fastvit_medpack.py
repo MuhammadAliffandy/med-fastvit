@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import random
+import subprocess
+from datetime import datetime, timezone
 import time
 from pathlib import Path
 
@@ -18,6 +20,8 @@ from torchvision.transforms import functional as TF
 import timm
 
 from medpack_annotations import IMAGE_EXTS, read_class_names, build_annotation_index, audit_split
+from training_config import parse_training_args
+from validation_map import evaluate_validation_map
 
 
 def set_seed(seed):
@@ -141,12 +145,19 @@ def main():
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--workers", type=int, default=min(12, os.cpu_count() or 4))
     ap.add_argument("--lr", type=float, default=2e-4)
+    ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--backbone", default="fastvit_sa12.apple_in1k")
     ap.add_argument("--annotation-format", choices=["yolo","voc"], default="yolo")
     ap.add_argument("--audit-only", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--config", default=None)
+    ap.add_argument("--experiment-name", default="fastvit_medpack")
+    ap.add_argument("--val-map-every", type=int, default=0,
+                    help="Compute validation mAP every N epochs and save best_map.pth; 0 disables it")
+    args = parse_training_args(ap)
     data_root = Path(args.data).resolve(); out = Path(args.out).resolve(); out.mkdir(parents=True, exist_ok=True)
+    if not args.audit_only and any((out/name).exists() for name in ("best.pth","last.pth","history.json")):
+        raise FileExistsError(f"Output already has training results: {out}. Use a new output directory.")
     train_dir = find_split(data_root, ["train", "training"])
     valid_dir = find_split(data_root, ["valid", "validation", "val"])
     names = read_class_names(data_root)
@@ -162,28 +173,62 @@ def main():
         return
     if not torch.cuda.is_available(): raise RuntimeError("CUDA GPU not available; run this on the DGX GPU node.")
     set_seed(args.seed); device = torch.device("cuda")
+    if args.val_map_every:
+        from pycocotools.cocoeval import COCOeval  # Check dependency before starting the run.
+    try:
+        git_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+        git_status=subprocess.check_output(['git','status','--porcelain'],text=True)
+    except (OSError,subprocess.CalledProcessError):
+        git_commit=None;git_status=None
+    run_config={"experiment":args.experiment_name,"started_at_utc":datetime.now(timezone.utc).isoformat(),
+        "args":vars(args),"git_commit":git_commit,"git_status":git_status,
+        "versions":{"torch":torch.__version__,"timm":timm.__version__},
+        "gpu":torch.cuda.get_device_name(0),"initialization":"ImageNet pretrained backbone; random detection head",
+        "warmup_epochs":0,"dataset_audit":audit,
+        "checkpoint_selection":{"best.pth":"minimum validation loss",
+            "best_map.pth":"maximum sampled validation mAP50-95" if args.val_map_every else "disabled"}}
+    (out/"run_config.json").write_text(json.dumps(run_config,indent=2))
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
                               pin_memory=True, persistent_workers=args.workers > 0, collate_fn=collate_fn)
     valid_loader = DataLoader(valid_ds, batch_size=max(1,args.batch_size//2), shuffle=False, num_workers=args.workers,
                               pin_memory=True, persistent_workers=args.workers > 0, collate_fn=collate_fn)
     model = build_detector(args.backbone,len(names)+1,args.image_size).to(device)
-    optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=max(1,args.epochs*2//3), gamma=.1)
     scaler = torch.amp.GradScaler("cuda")
     print(f"GPU={torch.cuda.get_device_name(0)} | torch={torch.__version__} | timm={timm.__version__}")
     print(f"train={len(train_ds)} valid={len(valid_ds)} classes={names} epochs={args.epochs} image={args.image_size}")
-    best = float("inf"); history=[]
+    best = float("inf"); best_map=-1.0; history=[]
     for epoch in range(1,args.epochs+1):
         start=time.time(); tr=train_epoch(model,train_loader,optimizer,scaler,device)
-        va=validation_loss(model,valid_loader,device); scheduler.step()
-        row={"epoch":epoch,"train_loss":tr,"val_loss":va,"lr":optimizer.param_groups[0]["lr"]}; history.append(row)
-        print(f"epoch {epoch:03d}/{args.epochs} train={tr:.6e} val={va:.6e} lr={row['lr']:.2g} time={time.time()-start:.1f}s", flush=True)
+        va=validation_loss(model,valid_loader,device)
+        map_metrics=None
+        if args.val_map_every and (epoch % args.val_map_every == 0 or epoch == args.epochs):
+            # Metric inference must not change the RNG trajectory of future training batches.
+            py_rng=random.getstate();np_rng=np.random.get_state()
+            cpu_rng=torch.get_rng_state();cuda_rng=torch.cuda.get_rng_state_all()
+            try:
+                map_metrics=evaluate_validation_map(model,valid_loader,names,device)
+            finally:
+                random.setstate(py_rng);np.random.set_state(np_rng)
+                torch.set_rng_state(cpu_rng);torch.cuda.set_rng_state_all(cuda_rng)
+        scheduler.step()
+        row={"epoch":epoch,"train_loss":tr,"val_loss":va,"lr":optimizer.param_groups[0]["lr"]}
+        if map_metrics is not None: row['validation_coco']=map_metrics
+        history.append(row)
+        map_log=f" mAP50-95={map_metrics['mAP50_95']:.4f} mAP50={map_metrics['mAP50']:.4f}" if map_metrics else ""
+        print(f"epoch {epoch:03d}/{args.epochs} train={tr:.6e} val={va:.6e} lr={row['lr']:.2g}{map_log} time={time.time()-start:.1f}s", flush=True)
         state={"epoch":epoch,"model":model.state_dict(),"optimizer":optimizer.state_dict(),"scheduler":scheduler.state_dict(),
-               "classes":names,"image_size":args.image_size,"backbone":args.backbone,"args":vars(args)}
+               "classes":names,"image_size":args.image_size,"backbone":args.backbone,"args":vars(args),
+               "git_commit":git_commit,"validation_coco":map_metrics}
         torch.save(state,out/"last.pth")
         if va < best:
-            best=va; torch.save(state,out/"best.pth")
+            best=va;torch.save(state,out/"best.pth")
+        if map_metrics is not None and map_metrics['mAP50_95'] > best_map:
+            best_map=map_metrics['mAP50_95'];torch.save(state,out/"best_map.pth")
+            (out/"best_map_metrics.json").write_text(json.dumps({"epoch":epoch,"coco_bbox":map_metrics},indent=2))
         (out/"history.json").write_text(json.dumps(history,indent=2))
     print(f"Training complete. Best validation loss={best:.4f}; outputs={out}")
+    if args.val_map_every: print(f"Best sampled validation mAP50-95={best_map:.4f}; checkpoint=best_map.pth")
 
 if __name__ == "__main__": main()
