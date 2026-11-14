@@ -13,7 +13,7 @@ VERSION = 1
 DOWNLOAD_URL = f"https://data.mendeley.com/public-api/zip/{DATASET_ID}/download/{VERSION}"
 EXPECTED_SHA256 = "c47e1b5133765801805e41ce4c3a688126aeaaf257d6e0af7c151ff6ae0df835"
 ROOT = Path(os.environ.get("MEDPACK_DATA_ROOT", "data/MedPackID")).resolve()
-ARCHIVE = ROOT.parent / f"MedPackID_v{VERSION}.zip"
+ARCHIVE = Path(os.environ.get("MEDPACK_ARCHIVE_PATH", ROOT / f"MedPackID_v{VERSION}.zip")).expanduser().resolve()
 
 
 def sha256(path: Path) -> str:
@@ -54,12 +54,14 @@ def download():
 
 def extract_nested_zips():
     ROOT.mkdir(parents=True, exist_ok=True)
-    if not any(ROOT.iterdir()):
+    extracted_marker = ROOT / ".download_all_extracted"
+    if not extracted_marker.exists():
         with zipfile.ZipFile(ARCHIVE) as zf:
             bad = zf.testzip()
             if bad:
                 raise RuntimeError(f"Corrupt archive member: {bad}")
             zf.extractall(ROOT)
+        extracted_marker.touch()
     # Download All contains images.zip, labels.zip, and annotations_voc.zip.
     while True:
         zips = [p for p in ROOT.rglob("*.zip") if p.is_file()]

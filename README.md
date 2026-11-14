@@ -21,7 +21,17 @@ conda activate fastvit_medpack
 GPU_ID=0 bash run_dgx.sh
 ```
 
-The runner downloads Mendeley MedPackID **directly from the DGX host**, verifies the supplied SHA-256 for the Download All archive, extracts its nested image and annotation ZIPs, and starts 100 epochs. Data is saved to `data/MedPackID`, with checkpoints/logs under `runs/fastvit_medpack_100ep`.
+The runner verifies the supplied SHA-256 for the Download All archive, extracts its nested image and annotation ZIPs, and starts 100 epochs. By default it downloads directly from Mendeley and saves data to `data/MedPackID`; checkpoints/logs go under `runs/fastvit_medpack_100ep`.
+
+If the archive has already been copied from Google Drive to `~/xxdrive/MedPackID/MedPackID_v1.zip`, reuse it without downloading from Mendeley:
+
+```bash
+mkdir -p "$HOME/xxdrive/MedPackID"
+MEDPACK_DATA_ROOT="$HOME/xxdrive/MedPackID" RUN_DIR="$HOME/xxdrive/MedPackID/runs/fastvit_medpack_100ep" \
+  bash run_dgx.sh
+```
+
+The script checks the archive checksum and extracts the outer and nested ZIPs into `MEDPACK_DATA_ROOT` before training.
 
 Optional overrides:
 
