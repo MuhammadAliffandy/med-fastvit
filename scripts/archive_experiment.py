@@ -46,6 +46,22 @@ def verify_archive(out, checksums=None):
     print(f'Archive contents verified: {out}',flush=True)
 
 
+def capture_source_environment(project, staging):
+    code=staging/'code';code.mkdir()
+    commit=subprocess.check_output(['git','-C',str(project),'rev-parse','HEAD'],text=True).strip()
+    subprocess.run(['git','-C',str(project),'archive','--format=tar.gz',
+                    f'--output={code / "source_snapshot.tar.gz"}','HEAD'],check=True)
+    status=subprocess.check_output(['git','-C',str(project),'status','--porcelain'],text=True)
+    (code/'git_status.txt').write_text(status)
+    env=staging/'environment';env.mkdir()
+    freeze=subprocess.check_output([sys.executable,'-m','pip','freeze'],text=True)
+    (env/'pip-freeze.txt').write_text(freeze)
+    if shutil.which('conda'):
+        exported=subprocess.run(['conda','env','export','--no-builds'],capture_output=True,text=True)
+        if exported.returncode == 0: (env/'conda-environment.yml').write_text(exported.stdout)
+    return commit,status
+
+
 def prepare_archive(project, training, evaluation, out):
     if out.exists():
         verify_archive(out)
@@ -56,18 +72,7 @@ def prepare_archive(project, training, evaluation, out):
     try:
         shutil.copytree(training,staging/'training',ignore=shutil.ignore_patterns('*.pid'))
         shutil.copytree(evaluation,staging/'validation')
-        code=staging/'code';code.mkdir()
-        commit=subprocess.check_output(['git','-C',str(project),'rev-parse','HEAD'],text=True).strip()
-        subprocess.run(['git','-C',str(project),'archive','--format=tar.gz',
-                        f'--output={code / "source_snapshot.tar.gz"}','HEAD'],check=True)
-        status=subprocess.check_output(['git','-C',str(project),'status','--porcelain'],text=True)
-        (code/'git_status.txt').write_text(status)
-        env=staging/'environment';env.mkdir()
-        freeze=subprocess.check_output([sys.executable,'-m','pip','freeze'],text=True)
-        (env/'pip-freeze.txt').write_text(freeze)
-        if shutil.which('conda'):
-            exported=subprocess.run(['conda','env','export','--no-builds'],capture_output=True,text=True)
-            if exported.returncode == 0: (env/'conda-environment.yml').write_text(exported.stdout)
+        commit,status=capture_source_environment(project,staging)
         manifest={'experiment':'exp01_fastvit_320','archived_at_utc':datetime.now(timezone.utc).isoformat(),
             'dataset':{'doi':'10.17632/d23kndp3sv.1','version':1},
             'classes':metrics['classes'],'image_size':metrics['image_size'],

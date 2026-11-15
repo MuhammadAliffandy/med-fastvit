@@ -146,3 +146,24 @@ Checkpoint and result selection:
 Metric inference uses float32 and a score floor of 0.001, matching offline evaluation. It preserves training RNG state. At the end, both best checkpoints are evaluated on validation with the original confidence 0.5 and matching IoU 0.5, and compared to `runs/eval_valid_best`. Reports are stored in `eval_valid_loss/` and `eval_valid_map/` under the new run. Each contains `comparison_exp01.json`, including mAP changes in percentage points and per-class FP/FN/precision/recall. The comparison rejects changed validation annotations or evaluation thresholds. Test data are not evaluated during this experiment.
 
 An output directory with existing checkpoints is rejected to protect previous results. This script does not implement training resumption. For a deliberate repeat, supply a fresh `RUN_DIR`.
+
+## Archive Experiment 02 and download inputs for Core ML conversion
+
+After `run_exp02.sh` completes both validation evaluations and comparisons:
+
+```bash
+conda activate fastvit_medpack
+bash scripts/backup_exp02.sh ~/xxdrive/MedPackID/experiments/exp02_fastvit_384
+```
+
+The default destination is the same path shown above. Copy progress uses rclone when available, or rsync for a mounted local destination, followed by content verification. The full archive contains all three training checkpoints (`best.pth`, `best_map.pth`, `last.pth`), history/configuration/logs, both validation reports and comparison files, source/environment snapshots, and a SHA-256 manifest. The script rejects incomplete training histories or checkpoints that do not match their evaluation hashes/epochs.
+
+For the next macOS/Core ML stage, download this file from the Drive archive:
+
+```text
+download/exp02_fastvit_384_coreml_source.zip
+```
+
+The ZIP contains `exp02_inference_weights.pth` selected from `best_map.pth`, the complete detector state without optimizer data, `model_config.json` (384 px, RGB, label IDs, resize/normalization/anchors/NMS settings), validation metrics, source snapshot, environment information, and its own SHA-256 manifest. Re-loading these inference weights is checked against the detector architecture before creating the ZIP.
+
+This is a PyTorch source bundle for conversion, not an exported Core ML model. Conversion of the full detector, numerical parity against PyTorch, and integration with the target app are subsequent steps once the bundle is available on the Mac. The full archived checkpoints remain available independently of this smaller download.
